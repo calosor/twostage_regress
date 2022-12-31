@@ -27,7 +27,8 @@ The 2SLS IV Regression model can be called by using the class *two_sls* in the m
 - Use *summary()* if you want a table form summary of the estimation.
 
 ## Very Important
-**For now, it is possible to use just one instrument for just one endogenous variable. Updates to complete the code are coming. **
+- **For now, it is possible to use just one instrument for just one endogenous variable. Updates to complete the code are coming.**
+- **To use the two stage module you will also need the ols linear regression module that you can find in this repository.**
 
 ## Example
 To import the model 
