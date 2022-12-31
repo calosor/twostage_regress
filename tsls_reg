@@ -1,0 +1,126 @@
+import numpy as np
+import pandas as pd
+import scipy
+from tabulate import tabulate
+from scipy import stats
+from ols_regression import ols
+
+
+
+class two_sls():
+
+    def __init__(self, dataset, dependent, regressors, endogenous, instruments,
+                 cons = True, fixed_effects = []):
+        self.dataset = dataset
+        self.dependent = dependent
+        self.regressors = regressors
+        self.endogenous = endogenous
+        self.instruments = instruments
+        self. cons = cons
+        self.fixed_effects = fixed_effects
+
+
+    def first_stage(self):
+        #define list of regressors for first stage
+        regressors_fs = self.regressors + self.instruments
+        #initialize ols linear regression for first stage
+        model_fs = ols(self.dataset, x= regressors_fs,  y = self.endogenous, fixed_eff=self.fixed_effects)
+        #obtain fitted values for second stage regression
+        fitted = model_fs.fitted()
+        betas = model_fs.int_vars().get('beta')
+
+
+        #return
+        return {'betas': betas, 'fitted': fitted, 'model': model_fs}
+
+    def second_stage(self):
+        #attach first stage fitted values in original dataset
+        self.dataset[f'1stage_{self.endogenous}'] = self.first_stage().get('fitted')
+        #regressors for second stage
+        ss_xs = self.regressors + [f'1stage_{self.endogenous}']
+        #initialize model for snd stage regression
+        model_ss = ols(self.dataset, y = self.dependent, x = ss_xs, fixed_eff = self.fixed_effects)
+        #computing beta coefficients
+        B_hat = (model_ss.int_vars().get('beta')).reshape((len(model_ss.int_vars().get('beta')),1))
+        #get matrix with X variables
+        X_2nd = ols(self.dataset, y = self.dependent, x = self.regressors + [self.endogenous],
+                                 fixed_eff = self.fixed_effects).prepare_data().get('X')
+        # comouting fitted values for 2nd stage residuaks
+        XB_hat = np.matmul(X_2nd, B_hat)
+        #computing 2nd stage residuals
+        residual_2nd = model_ss.prepare_data().get('Y') - XB_hat
+        #computing sigma 2nd stage
+        sigma_hat = np.matmul(np.transpose(residual_2nd), residual_2nd)/(len(residual_2nd) - len(self.regressors + [self.endogenous]))
+        #computing 2nd stage variance covariance matrix
+        Z = self.first_stage().get('model').prepare_data().get('X')
+        X_hat_second = np.matmul(np.transpose(Z),X_2nd)
+        X_hat_first = np.linalg.inv(np.matmul(np.transpose(Z),Z))
+        X_hat = np.matmul(Z, np.matmul(X_hat_first,X_hat_second))
+        var_matrix = np.multiply(sigma_hat, np.linalg.inv(np.matmul(np.transpose(X_hat),X_hat)))
+        var_matrix_diag = var_matrix.diagonal()
+        std_var = np.sqrt(var_matrix_diag)
+        #computing t statistic
+        t = np.round(model_ss.int_vars().get('beta') / std_var,2)
+        #computing p value
+        dfree = len(model_ss.prepare_data().get('df')) - 1
+        p_val =  np.round(scipy.stats.t.sf(abs(t), df=dfree)*2,3)
+        #computing confidence bands
+        low = model_ss.int_vars().get('beta') - np.dot(std_var, 1.96)
+        high = model_ss.int_vars().get('beta') + np.dot(std_var, 1.96)
+
+        return {'beta':model_ss.int_vars().get('beta'), 'std': std_var, 't': t, 'p' : p_val, 'low': low, 'high': high,
+                'var_matrix': var_matrix}
+
+    def weak_id_test(self):
+
+        #for now just one endogenous just one instrument
+
+        unrestricted_model = self.first_stage().get('model')
+        restricted_model = ols(self.dataset, x= self.regressors,  y = self.endogenous, fixed_eff=self.fixed_effects)
+        res1 = restricted_model.residuals()
+        res2 = unrestricted_model.residuals()
+        rss1 = np.matmul(np.transpose(res1), res1)
+        rss2 = np.matmul(np.transpose(res2), res2)
+        p1 = restricted_model.prepare_data().get('X').shape[1]
+        p2 = unrestricted_model.prepare_data().get('X').shape[1]
+        F = ((rss1-rss2)/(p2-p1))/(rss2/((len(unrestricted_model.prepare_data().get('df')))-p2))
+
+        return F[0][0]
+
+
+
+    def summary(self):
+
+        print('First stage regression')
+
+        self.first_stage().get('model').summary()
+        print('')
+
+        print('Second stage regression')
+        header = [self.dependent, 'coefficient', 'se', 't', 'p_value', 'low 95', 'high 95']
+        table = []
+        vars = self.regressors + [self.endogenous] + ['cons']
+
+        vec = [vars, self.second_stage().get('beta'), self.second_stage().get('std'), self.second_stage().get('t'),
+        self.second_stage().get('p'), self.second_stage().get('low'),  self.second_stage().get('high')]
+        vec = list(map(list, zip(*vec)))
+
+        print('-------------------------------------------------------------------------------')
+        print(tabulate(vec, headers=header))
+        print('-------------------------------------------------------------------------------')
+
+        print('')
+        print('Weak instruments identification test')
+        print('----------------------------------------------------------------------------')
+        print(f'Cragg-Donald Wald F statistic: {self.weak_id_test()}')
+        print('Stock Yogo weak ID critical values: 10%:16; 15%:9; 20%:7; 25%:6')
+        print('Reference: Stock-Yogo (2005)')
+        print('')
+        print('----------------------------------------------------------------------------')
+        print(f'Instrumented: {[self.endogenous]}')
+        print(f'Included instruments: {self.regressors}')
+        print(f'Excluded instruments: {self.instruments}')
+        print('----------------------------------------------------------------------------')
+
+        return ''
+
