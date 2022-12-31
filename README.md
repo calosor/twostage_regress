@@ -85,6 +85,6 @@ Process finished with exit code 0
 ```
 
 ## References
-Stock J, Yogo M. Testing for Weak Instruments in Linear IV Regression. In: Andrews DWK Identification and Inference for Econometric Models. New York: Cambridge University Press ; 2005. pp. 80-108.
-Dataset from Wooldridge data sets: http://fmwww.bc.edu/ec-p/data/wooldridge/datasets.list.html
-Wooldridge, Jeffrey M. Econometric analysis of cross section and panel data. MIT press, 2010.
+- Stock J, Yogo M. Testing for Weak Instruments in Linear IV Regression. In: Andrews DWK Identification and Inference for Econometric Models. New York: Cambridge University Press ; 2005. pp. 80-108.
+- Dataset from Wooldridge data sets: http://fmwww.bc.edu/ec-p/data/wooldridge/datasets.list.html
+- Wooldridge, Jeffrey M. Econometric analysis of cross section and panel data. MIT press, 2010.
