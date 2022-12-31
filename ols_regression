@@ -1,0 +1,236 @@
+#import modules
+
+import numpy as np
+import pandas as pd
+import scipy
+from tabulate import tabulate
+from scipy import stats
+
+
+################################################################à
+
+#OLS LINEAR REGRESSION
+
+################################################################à
+
+
+class ols():
+
+    def __init__(self, data , x, y, cons = True, fixed_eff = [],method = 'non_robust', cluster = False):
+        self.x = x
+        self.y = y
+        self.data = data
+        self.cons = cons
+        self.method = method
+        self.status = 'ols'
+        self.fixed_eff = fixed_eff
+        self.cluster = cluster
+
+    #prepare the dataframe
+
+    def prepare_data(self):
+
+        if len(self.fixed_eff) == 0:
+            # define list keys for the used df
+            keys = [self.y] + self.x
+            # select the new df based on keys
+            reg_df = self.data[keys].dropna()
+            # add the constant if the user wants it
+            if self.cons is True:
+                ones = np.ones(len(reg_df))
+                reg_df['cons'] = ones
+                # define the features matrix
+                X = reg_df.drop(self.y, axis=1).to_numpy()
+                X = X.reshape((len(reg_df), len(self.x) + 1))
+
+
+            else:
+                X = reg_df.drop(self.y, axis=1).to_numpy()
+                X = X.reshape((len(reg_df), len(self.x)))
+
+            y_vec = reg_df[self.y].to_numpy()
+            y_vec = y_vec.reshape((len(y_vec), 1))
+
+            return {'df': reg_df, 'X': X, 'Y': y_vec}
+
+        else:
+            # define list keys for the used df
+            keys = [self.y] + self.x
+            # select the new df based on keys
+            reg_df = self.data.dropna(subset = keys)
+            fe_vars = []
+            for fe in self.fixed_eff:
+                unique = reg_df[fe].unique()[1:]
+                fe_vars.extend(unique)
+                temp_df = pd.get_dummies(reg_df[fe], drop_first=True)
+                reg_df = pd.concat([reg_df, temp_df], axis = 1)
+            keys = keys + fe_vars
+            reg_df = reg_df[keys]
+            if self.cons is True:
+                ones = np.ones(len(reg_df))
+                reg_df['cons'] = ones
+                # define the features matrix
+                X = reg_df.drop(self.y, axis=1).to_numpy()
+                X = X.reshape((len(reg_df), len(self.x) + len(fe_vars) + 1))
+
+            else:
+                X = reg_df.drop(self.y, axis=1).to_numpy()
+                X = X.reshape((len(reg_df), len(self.x) + len(fe_vars)))
+
+            y_vec = reg_df[self.y].to_numpy()
+            y_vec = y_vec.reshape((len(y_vec), 1))
+
+            return {'df': reg_df, 'X': X, 'Y': y_vec}
+
+
+
+    def betas(self):
+        X = self.prepare_data().get('X')
+        Y = self.prepare_data().get('Y')
+
+        first_part = np.linalg.inv(np.matmul(np.transpose(X), X))
+        second_part = np.matmul(np.transpose(X), Y)
+        return np.matmul(first_part, second_part).reshape((1, X.shape[1]))
+
+
+
+    def fitted(self):
+        X =self.prepare_data().get('X')
+        return np.matmul(X,self.betas()[0].reshape((X.shape[1],1)))
+
+
+
+    def residuals(self):
+        return self.prepare_data().get('Y') - np.matmul(self.prepare_data().get('X'), np.transpose(self.betas()))
+
+
+
+    def variance_covariance(self):
+        if self.method == 'non_robust':
+            ssr = np.matmul(np.transpose(self.residuals()), self.residuals())
+            dfg = 1 / (len(self.prepare_data().get('df')) - self.prepare_data().get('X').shape[1])
+            estimated_var = ssr * dfg
+            xxinv = np.linalg.inv(np.matmul(np.transpose(self.prepare_data().get('X')), self.prepare_data().get('X')))
+            avar = np.multiply(estimated_var, xxinv)
+
+            return avar
+
+        elif self.method == 'robust':
+            xxinv = np.linalg.inv(np.matmul(np.transpose(self.prepare_data().get('X')), self.prepare_data().get('X')))
+            B = np.dot(np.transpose(self.prepare_data().get('X')), self.prepare_data().get('X') * self.residuals() ** 2)
+            avar = np.matmul(np.matmul(xxinv, B), xxinv)
+            return avar
+
+        elif self.method == "cluster":
+            xxinv = np.linalg.inv(np.matmul(np.transpose(self.prepare_data().get('X')), self.prepare_data().get('X')))
+            keys = [self.y] + self.x + [self.cluster]
+            element_clust = self.data[keys].dropna()[self.cluster].unique()
+            reg_df = self.prepare_data().get('df')
+
+
+            reg_df[self.cluster] = self.data[keys].dropna()[self.cluster]
+
+            controls = reg_df.columns.tolist()
+            controls = [i for i in controls if i not in [self.y] + [self.cluster]]
+
+
+            matrix_sigma = np.zeros((len(controls), len(controls)))
+            c = (len(element_clust)/(len(element_clust)-1))
+            beta = self.betas()[0]
+
+            for element in element_clust:
+                xg = reg_df[reg_df[self.cluster] == element][controls].to_numpy()
+                xgtra = np.transpose(xg)
+                ug = (reg_df[reg_df[self.cluster] == element][self.y].to_numpy() -(np.matmul(xg,beta)))
+                ug = np.dot((ug.reshape(len(ug),1)),np.sqrt(c)) #must be ng*1
+                ugtrasp = np.transpose(ug)
+                sigma = np.matmul(np.matmul(xgtra,np.matmul(ug,ugtrasp)),xg)
+                matrix_sigma = matrix_sigma+ sigma
+            avar = np.matmul(np.matmul(xxinv,matrix_sigma),xxinv)
+            return avar
+
+    def std(self):
+
+        avar = self.variance_covariance()
+        return np.sqrt(avar.diagonal())
+        #old code
+        #---------------------
+        # std = []
+        # for i in range(avar.shape[1]):
+        #     for j in range(avar.shape[1]):
+        #         if i == j:
+        #             std.append(np.sqrt(avar[i, j]))
+        #
+        # return std
+       #---------------------
+
+    def int_vars(self):
+        if len(self.fixed_eff) == 0:
+            return {'beta': np.array(self.betas()[0]), 'std': np.array(self.std())}
+        else:
+            if self.cons is False:
+                beta = self.betas()[0][0:len(self.x)]
+                std = self.std()[0:len(self.x)]
+            else:
+                beta = self.betas()[0][0:len(self.x)].tolist()
+                beta.append(self.betas()[0][len(self.betas()[0])-1])
+                std = self.std()[0:len(self.x)].tolist()
+                std.append(self.std()[len(self.std())-1])
+            return {'beta': np.array(beta), 'std': np.array(std)}
+
+
+
+
+    def t(self):
+        coeff = self.int_vars().get('beta')
+        std = self.int_vars().get('std')
+
+        # ---------------------
+        return np.round(coeff / std,2)
+        # t = np.zeros(len(coeff))
+        # for i in range(len(coeff)):
+        #     t[i] = coeff[i] / (std[i])
+        # return t
+    #---------------------
+
+    def p_value(self):
+        tvec = self.t()
+        dfree = len(self.prepare_data().get('df'))-1
+        return np.round(scipy.stats.t.sf(abs(tvec), df=dfree)*2,2)
+
+
+        #return np.round(scipy.stats.norm.sf(abs(tvec)) * 2,2)
+        # ---------------------
+        # pvalues = np.zeros(len(tvec))
+        # for i in range(len(tvec)):
+        #     pvalues[i] = round(scipy.stats.norm.sf(abs(tvec[i])) * 2, 2)
+        # return pvalues
+
+
+
+    def confidence(self):
+        betas = self.int_vars().get('beta')
+        std = self.int_vars().get('std')
+        # betas = np.array(self.betas()[0])
+        # std = np.array(self.std())
+        low = betas - np.dot(std,1.96)
+        high = betas + np.dot(std,1.96)
+
+        return {'low': low, 'high': high}
+
+
+
+    def summary(self):
+        header = [self.y, 'coefficient', 'se', 't', 'p_value', 'low 95', 'high 95']
+        table = []
+        vars = self.x + ['cons']
+
+        vec = [vars, self.int_vars().get('beta'), self.int_vars().get('std'), self.t(), self.p_value(), self.confidence().get('low'),
+                   self.confidence().get('high')]
+        vec = list(map(list, zip(*vec)))
+
+
+        print('-------------------------------------------------------------------------------')
+        print(tabulate(vec, headers=header))
+        print('-------------------------------------------------------------------------------')
+        return ' '
